@@ -65,23 +65,23 @@ def check_gpu():
         return False, None
 
 
-def select_video_file():
-    """Open file dialog to select video file."""
+def select_video_files():
+    """Open file dialog to select one or more video files."""
     root = tk.Tk()
     root.withdraw()  # Hide the main window
     root.attributes('-topmost', True)  # Bring dialog to front
-    
-    file_path = filedialog.askopenfilename(
-        title="Select Video File to Transcribe",
+
+    file_paths = filedialog.askopenfilenames(
+        title="Select Video File(s) to Transcribe",
         filetypes=[
             ("Video files", "*.mp4 *.mkv *.avi *.mov *.webm *.flv *.wmv"),
             ("MP4 files", "*.mp4"),
             ("All files", "*.*")
         ]
     )
-    
+
     root.destroy()
-    return file_path
+    return list(file_paths)
 
 
 def select_save_location(default_name):
@@ -104,69 +104,43 @@ def select_save_location(default_name):
     return file_path
 
 
-def transcribe_video(video_path, output_path=None, model_size="large", language=None, use_gui=True):
+def transcribe_video(video_path, model, output_path=None, language=None, use_fp16=True):
     """
-    Transcribe a video file to text using Whisper.
-    
+    Transcribe a video file to text using a pre-loaded Whisper model.
+
     Args:
         video_path: Path to the video file
-        output_path: Path for the output text file (optional)
-        model_size: Whisper model size (tiny, base, small, medium, large, large-v2, large-v3)
+        model: Pre-loaded Whisper model instance
+        output_path: Path for the output text file (auto-derived if None)
         language: Language code (e.g., 'en', 'es', 'fr') or None for auto-detect
-        use_gui: Whether to use GUI dialogs
+        use_fp16: Whether to use fp16 (GPU) mode
     """
     video_file = Path(video_path)
-    
+
     # Validate input file
     if not video_file.exists():
         raise FileNotFoundError(f"Video file not found: {video_path}")
-    
-    # Check GPU availability
-    gpu_available, gpu_name = check_gpu()
-    if gpu_available:
-        print(f"\n✓✓✓ GPU ACCELERATION ENABLED ✓✓✓")
-        print(f"✓ Using: {gpu_name}")
-        print("✓ Transcription will be 2-3x faster!")
-        use_fp16 = True
-    else:
-        print(f"\n⚠⚠⚠ GPU NOT DETECTED - USING CPU ⚠⚠⚠")
-        print("⚠ Transcription will be significantly slower")
-        print("⚠ See GPU detection info above for troubleshooting")
-        use_fp16 = False
-    
-    # Set output path using GUI if not provided
-    if output_path is None and use_gui:
-        default_name = video_file.stem + "_transcript.txt"
-        output_path = select_save_location(default_name)
-        if not output_path:  # User cancelled
-            print("Save location selection cancelled.")
-            return None
-    elif output_path is None:
-        output_path = video_file.with_suffix('.txt')
-    
+
+    # Auto-derive output path next to the source video
+    if output_path is None:
+        output_path = video_file.with_name(video_file.stem + "_transcript.txt")
+
     output_path = Path(output_path)
-    
+
     print("\n" + "="*70)
     print("TRANSCRIPTION SETTINGS")
     print("="*70)
     print(f"Video file:     {video_file}")
     print(f"Output file:    {output_path}")
-    print(f"Model:          {model_size}")
     print(f"GPU Mode:       {'Enabled (fp16)' if use_fp16 else 'Disabled (CPU)'}")
     print(f"Language:       {'Auto-detect' if language is None else language}")
     print("="*70 + "\n")
-    
-    print("Loading Whisper model (this may take a moment)...")
-    
+
+    print(f"Starting transcription...")
+    print("This may take a while for a long video...")
+    print("Progress will be shown below:\n")
+
     try:
-        # Load the Whisper model
-        model = whisper.load_model(model_size)
-        
-        print(f"✓ Model loaded successfully")
-        print(f"\nStarting transcription...")
-        print("This may take a while for a 3+ hour video...")
-        print("Progress will be shown below:\n")
-        
         # Transcribe the video with optimal settings for quality
         result = model.transcribe(
             str(video_file),
@@ -211,29 +185,10 @@ def transcribe_video(video_path, output_path=None, model_size="large", language=
         print(f"✓ Number of segments:       {len(result['segments'])}")
         print("="*70 + "\n")
         
-        # Show success message box if using GUI
-        if use_gui:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes('-topmost', True)
-            messagebox.showinfo(
-                "Transcription Complete!",
-                f"Successfully transcribed video!\n\n"
-                f"Saved to:\n{output_path}\n\n"
-                f"Total characters: {len(transcription):,}"
-            )
-            root.destroy()
-        
         return transcription
-        
+
     except Exception as e:
         print(f"\n✗ Error during transcription: {e}")
-        if use_gui:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes('-topmost', True)
-            messagebox.showerror("Transcription Error", f"An error occurred:\n\n{str(e)}")
-            root.destroy()
         raise
 
 
@@ -325,23 +280,72 @@ def main():
     print("  large-v3  - Latest, most accurate (~10GB)")
     print(f"\nUsing: {args.model.upper()} model for maximum quality\n")
     
-    # Get video path
-    video_path = args.video_path
-    if not video_path and use_gui:
+    # Get video paths
+    if args.video_path:
+        video_paths = [args.video_path]
+    elif use_gui:
         print("Opening file selection dialog...\n")
-        video_path = select_video_file()
-        if not video_path:
-            print("No file selected. Exiting.")
+        video_paths = select_video_files()
+        if not video_paths:
+            print("No file(s) selected. Exiting.")
             sys.exit(0)
-    elif not video_path:
+    else:
         print("Error: No video path provided and GUI is disabled.")
         print("Use: python transcribe_video.py <video_file>")
         sys.exit(1)
-    
-    try:
-        transcribe_video(video_path, args.output, args.model, args.language, use_gui)
-    except Exception as e:
-        print(f"Failed to transcribe video: {e}")
+
+    print(f"\n{len(video_paths)} file(s) selected for transcription.\n")
+
+    # Load model once for all files
+    print("Loading Whisper model (this may take a moment)...")
+    model = whisper.load_model(args.model)
+    print(f"✓ Model '{args.model}' loaded successfully\n")
+
+    use_fp16 = gpu_available
+
+    succeeded = []
+    failed = []
+
+    for i, video_path in enumerate(video_paths, start=1):
+        print(f"\n{'='*70}")
+        print(f"FILE {i} of {len(video_paths)}: {Path(video_path).name}")
+        print(f"{'='*70}")
+        try:
+            transcribe_video(video_path, model, language=args.language, use_fp16=use_fp16)
+            succeeded.append(video_path)
+        except Exception as e:
+            print(f"Failed to transcribe '{video_path}': {e}")
+            failed.append((video_path, str(e)))
+
+    # Final summary
+    print("\n" + "="*70)
+    print("BATCH TRANSCRIPTION SUMMARY")
+    print("="*70)
+    print(f"  Completed: {len(succeeded)} / {len(video_paths)}")
+    for path in succeeded:
+        out = Path(path).with_name(Path(path).stem + "_transcript.txt")
+        print(f"  ✓ {Path(path).name}  ->  {out.name}")
+    for path, err in failed:
+        print(f"  ✗ {Path(path).name}  ->  ERROR: {err}")
+    print("="*70 + "\n")
+
+    if use_gui and (succeeded or failed):
+        summary_lines = [f"Completed {len(succeeded)} of {len(video_paths)} file(s).\n"]
+        for path in succeeded:
+            out = Path(path).with_name(Path(path).stem + "_transcript.txt")
+            summary_lines.append(f"✓ {Path(path).name}\n   -> {out}")
+        for path, err in failed:
+            summary_lines.append(f"✗ {Path(path).name}\n   ERROR: {err}")
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        if failed:
+            messagebox.showwarning("Batch Complete (with errors)", "\n\n".join(summary_lines))
+        else:
+            messagebox.showinfo("Batch Complete!", "\n\n".join(summary_lines))
+        root.destroy()
+
+    if failed:
         sys.exit(1)
 
 
