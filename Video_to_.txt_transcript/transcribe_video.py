@@ -74,8 +74,9 @@ def select_video_files():
     file_paths = filedialog.askopenfilenames(
         title="Select Video File(s) to Transcribe",
         filetypes=[
-            ("Video files", "*.mp4 *.mkv *.avi *.mov *.webm *.flv *.wmv"),
+            ("Video/Audio files", "*.mp4 *.mkv *.avi *.mov *.webm *.flv *.wmv *.m4a *.mp3 *.wav *.ogg *.flac"),
             ("MP4 files", "*.mp4"),
+            ("Audio files", "*.m4a *.mp3 *.wav *.ogg *.flac"),
             ("All files", "*.*")
         ]
     )
